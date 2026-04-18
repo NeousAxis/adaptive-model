@@ -25,11 +25,11 @@ On activation, display:
 
 ```
 Adaptive Model active.
-The optimal model will be automatically selected at each step.
-Every response and every action starts with [Model: <name>].
+Every direct response will carry [Session: <real orchestrator>].
+Every delegation to a sub-agent will carry [Delegating to: <model>] — <purpose>.
 ```
 
-Then immediately analyze the first message. **Starting with the very first response after activation, apply the announcement rule (see "Model indicator" section).**
+Then immediately analyze the first message. **Starting with the very first response after activation, apply the honest announcement rule (see "Model indicator" section).**
 
 ## The decision engine
 
@@ -97,25 +97,48 @@ Each sub-agent receives in its prompt:
 
 The prompt must be complete and self-contained — the sub-agent has no access to the conversation.
 
-### Model indicator (MANDATORY)
+### Model indicator (MANDATORY and HONEST)
 
-**Absolute rule:** at the start of EVERY response and EVERY action, announce the loaded model. No exception, even if the model hasn't changed since the previous action.
+**Technical truth:** the orchestrator model (the one writing your response) is **fixed for the entire session**. It CANNOT become a different model when writing directly — it can only *delegate* a sub-task to another model via the `Agent(model=…)` tool.
 
-Announcement line format (first line of every response / action):
+There are therefore two distinct annotations. **Never conflate them. Never lie.**
 
+#### 1. `[Session: <orchestrator>]` — on EVERY direct response
+
+First line of every response you write yourself (text, analysis, synthesis, non-Agent tool calls like Read/Edit/Bash). State the real session model, the one fixed by the user in the harness. Never lie about this value — if the session is Opus 4.7, write `[Session: Opus 4.7]`, even if you would *like* to appear lighter.
+
+Format:
 ```
-[Model: <Haiku 4.5 | Sonnet 4.6 | Opus 4.7>] — <purpose of this action>
-```
-
-Examples:
-
-```
-[Model: Haiku 4.5] — clarifying the need
-[Model: Sonnet 4.6] — implementing the auth module
-[Model: Opus 4.7] — architecture arbitration
+[Session: <Haiku 4.5 | Sonnet 4.6 | Opus 4.7>]
 ```
 
-If multiple actions chain in the same response (read, write, tool call), each action is preceded by its own announcement line. The user must be able to read the transcript and know at any moment which model is reasoning.
+Example at the top of a response:
+```
+[Session: Opus 4.7]
+Here is my answer...
+```
+
+#### 2. `[Delegating to: <model>] — <purpose>` — only when you actually spawn a sub-agent
+
+Print this line **immediately before** each `Agent(model=…)` call. The `<model>` must exactly match what you pass to `model:`. If you are not spawning an `Agent`, do not write this line — a tag without real delegation is a lie.
+
+Format:
+```
+[Delegating to: <Haiku 4.5 | Sonnet 4.6 | Opus 4.7>] — <sub-task purpose>
+```
+
+Example:
+```
+[Delegating to: Sonnet 4.6] — implementing the auth module
+<Agent(model="sonnet", ...) call>
+```
+
+#### What is NOT allowed
+
+- Writing `[Model: Sonnet 4.6]` on a response that the Opus orchestrator writes itself → lie.
+- Omitting `[Session: …]` on a direct response → opaque, forbidden.
+- Writing `[Delegating to: X]` without calling `Agent(model=X, …)` right after → theater, forbidden.
+- Changing the value of `[Session: …]` mid-session → technically impossible, therefore a lie.
 
 ### Tracking
 
@@ -142,10 +165,10 @@ The user always retains control:
 
 ## Rules
 
-1. **Mandatory announcement** — Every response and every action starts with `[Model: <name>] — <purpose>`. No exceptions.
+1. **Absolute honesty about the model** — `[Session: <orchestrator>]` on every direct response (the real model, never a lie). `[Delegating to: <model>] — <purpose>` only when an `Agent(model=…)` is actually spawned.
 2. **Every decision is independent** — Don't follow a sequence. Evaluate at each step.
 3. **Context dictates** — The situation dictates the model, not a predefined workflow.
-4. **Transparent for the user** — They never have to guess which model is reasoning: it's announced.
+4. **Transparent for the user** — They never have to guess which model is reasoning: it's announced, and true.
 5. **Escalation = intelligence** — Recognizing your limits and handing off is smart.
 6. **No waste** — Don't use an overpowered model for a simple task.
 

@@ -25,7 +25,7 @@ Examples:
 
 ## Key features
 
-- **Mandatory model announcement** — every response and every action starts with `[Model: <name>] — <purpose>`, so you always know which model is reasoning
+- **Honest, two-tag model annotation** — `[Session: <orchestrator>]` on every direct response (the real, fixed session model), and `[Delegating to: <model>] — <purpose>` only when a sub-agent is actually spawned. No false claims of "becoming" a lighter model
 - **Automatic escalation** — when Sonnet gets stuck, Opus is spawned with full context
 - **User override** — say "use Opus" or "go fast" and the skill respects it
 - **No waste** — never uses an overpowered model for a trivial task
