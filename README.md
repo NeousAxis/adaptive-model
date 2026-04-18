@@ -1,75 +1,164 @@
 # Adaptive Model
 
-A Claude Code skill that intelligently routes each step of your work to the optimal Claude model (Haiku, Sonnet, or Opus) based on what the task actually requires.
+A Claude Code skill + harness-enforced hooks that route each step of your work to the optimal Claude model (Haiku, Sonnet, Opus) and make the model announcement **honest and verifiable**.
 
-No more manually picking models. No rigid "Phase 1 → Phase 2 → Phase 3" workflows. Just continuous, contextual decisions.
+Two layers:
 
-## What it does
+1. **The skill** ([`SKILL.md`](SKILL.md)) — the decision engine: evaluates cognitive complexity, decision risk, and work state at each step, then picks the model.
+2. **The hooks** ([`hooks/`](hooks/)) — harness-level enforcement that the declared model is (a) always announced and (b) not a lie.
 
-Once activated at the start of a session, Adaptive Model stays on for the entire conversation. At every action — user message, internal step, sub-task — it evaluates three axes and picks the right model:
+Without the hooks, the skill is just a guideline Claude can drift from. With the hooks, the runtime blocks any response that omits or fakes the tag.
 
-1. **Cognitive complexity** — how hard is this step?
-2. **Decision risk** — how structural or reversible is it?
-3. **Current state** — are we clarifying, executing, or stuck?
+## Why the hooks matter
 
-Examples:
+A skill is a document Claude reads and tries to follow. Models drift — especially on formatting rules. Anyone who has used Claude long enough has seen it quietly stop following a rule after a few turns.
 
-| Situation | Model | Why |
-|-----------|-------|-----|
-| User vaguely describes what they want | Haiku | Low complexity, just clarify |
-| Choose between 3 possible architectures | Opus | Structural, high complexity |
-| Plan validated, code the auth module | Sonnet | Clear execution |
-| Sonnet failed twice on the same bug | Opus | Stuck, needs deep diagnosis |
-| "Just add a console.log" | Sonnet | Trivial |
-| Full security audit of the code | Opus | Expertise + global view |
+Hooks run in Claude Code's harness, not in the model. They can:
 
-## Key features
+- Inject a reminder into every user turn (so the rule is always in context)
+- Verify the response after the fact and block it if non-compliant
+- Cross-check what the model claims against server-generated truth (the API-reported model ID, the actual tool parameters)
 
-- **Honest, two-tag model annotation** — `[Session: <orchestrator>]` on every direct response (the real, fixed session model), and `[Delegating to: <model>] — <purpose>` only when a sub-agent is actually spawned. No false claims of "becoming" a lighter model
-- **Automatic escalation** — when Sonnet gets stuck, Opus is spawned with full context
-- **User override** — say "use Opus" or "go fast" and the skill respects it
-- **No waste** — never uses an overpowered model for a trivial task
-- **Every decision is independent** — no predetermined sequence
+This repo ships all three.
+
+## What the annotations mean
+
+Two tags, two meanings. Never conflate them. Never lie.
+
+### `[Session: <orchestrator>]` — first line of every direct response
+
+The orchestrator model is **fixed for the entire session**. It cannot become a different model when writing directly — it can only *delegate* a sub-task to another model via `Agent(model=…)`. The session tag must be truthful.
+
+Example:
+```
+[Session: Opus 4.7]
+Here is my answer…
+```
+
+### `[Delegating to: <model>] — <purpose>` — immediately before a real `Agent(model=…)` call
+
+Only written when a sub-agent is actually spawned. The model in the tag must match the model parameter passed to `Agent`.
+
+Example:
+```
+[Delegating to: Sonnet 4.6] — implementing the auth module
+<Agent(model="sonnet", ...)>
+```
+
+## Hook suite
+
+| File | Event | Blocking | What it verifies |
+|------|-------|----------|------------------|
+| [`hooks/adaptive-model-reminder.sh`](hooks/adaptive-model-reminder.sh) | `UserPromptSubmit` | no | Injects a `<system-reminder>` on every user turn so the rule is always in context |
+| [`hooks/adaptive-model-verify.sh`](hooks/adaptive-model-verify.sh) (Gate 1) | `Stop` | **yes** | Response starts with `[Session: …]` |
+| [`hooks/adaptive-model-verify.sh`](hooks/adaptive-model-verify.sh) (Gate 2) | `Stop` | **yes** | The declared model matches the real session model — cross-checked via the API-generated `.message.model` field in the transcript, which Claude cannot fake |
+| [`hooks/adaptive-model-verify.sh`](hooks/adaptive-model-verify.sh) (Gate 3) | `Stop` | **yes** | No phantom `[Delegating to: …]` tags (a tag without a matching `Agent` tool call) |
+| [`hooks/adaptive-model-delegation-verify.sh`](hooks/adaptive-model-delegation-verify.sh) | `PostToolUse:Agent` | no (systemMessage) | The last `[Delegating to: X]` tag matches the `model` parameter actually passed to `Agent` |
+
+### What each failure mode triggers
+
+| Failure | How it is caught |
+|---------|-------------------|
+| I forget the `[Session:]` tag | Gate 1 blocks |
+| I write `[Session: Sonnet 4.6]` while running Opus 4.7 | Gate 2 blocks (cross-check with the API) |
+| I write `[Delegating to: X]` without spawning `Agent` | Gate 3 blocks |
+| I call `Agent(model="haiku")` after `[Delegating to: Opus]` | `PostToolUse` emits a visible `systemMessage` |
+| Unknown future model ID not yet in the mapping table | Gate 2 logs a WARN, does not block (forward compat) |
+| `Agent` called without a preceding tag | Currently allowed (internal delegations, meta-agents) |
+
+### One-shot bypass
+
+For meta-discussions about the skill itself, or intentionally plain answers:
+
+- Include `#no-session-tag` in your user message, **or**
+- Include `ADAPTIVE_MODEL_BYPASS=1` in your user message
+
+The Stop hook sees the marker in the last user message and exits silently for that one response. The next turn, the rule resumes.
 
 ## Installation
 
-Clone this repo into your Claude Code skills directory:
+### 1. Clone the skill
 
 ```bash
 git clone https://github.com/NeousAxis/adaptive-model.git ~/.claude/skills/adaptive-model
 ```
 
-Or copy the files manually so the structure looks like:
+### 2. Install the hooks
 
+```bash
+mkdir -p ~/.claude/hooks
+cp ~/.claude/skills/adaptive-model/hooks/*.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/adaptive-model-*.sh
 ```
-~/.claude/skills/adaptive-model/
-├── SKILL.md
-└── references/
-    └── phases.md
+
+### 3. Wire them into `~/.claude/settings.json`
+
+Merge the `hooks` block from [`examples/settings.json`](examples/settings.json) into your existing settings. Do **not** replace the file — preserve your existing permissions, plugins, env vars, etc.
+
+Reference shape:
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "$HOME/.claude/hooks/adaptive-model-reminder.sh", "timeout": 5 }] }],
+    "Stop":              [{ "hooks": [{ "type": "command", "command": "$HOME/.claude/hooks/adaptive-model-verify.sh",    "timeout": 10 }] }],
+    "PostToolUse":       [{ "matcher": "Agent", "hooks": [{ "type": "command", "command": "$HOME/.claude/hooks/adaptive-model-delegation-verify.sh", "timeout": 10 }] }]
+  }
+}
 ```
 
-The skill will appear in your available skills list and can be triggered automatically on multi-step requests, or explicitly via `/adaptive-model` (or equivalent).
+### 4. Activate in the current session
 
-## How it activates
+Claude Code's settings watcher may not pick up newly created hook files in a session that started before them. Either:
 
-Adaptive Model is designed to fire on the first non-trivial message of a session:
+- Open `/hooks` in Claude Code (reloads the config), or
+- Restart the session
 
-- ✅ "I'd like an app that…"
-- ✅ "Add a payment module"
-- ✅ "Integrate Telegram with…"
-- ✅ "Build me an agent that…"
-- ❌ Isolated factual questions, typos, single commands
+New sessions pick them up automatically.
 
-On activation, it announces itself and then evaluates the first request.
+## Debugging
 
-## Structure
+Both verification hooks write to `/tmp/adaptive-model-verify.log` and `/tmp/adaptive-model-delegation.log` on every run (log rotates at 100 KB). Inspect them when something unexpected happens:
 
-- [SKILL.md](SKILL.md) — the main skill file with the decision engine, rules, and escalation logic
-- [references/phases.md](references/phases.md) — prompt templates by task type (clarification, planning, code, test, debug, security)
+```bash
+tail -f /tmp/adaptive-model-verify.log
+```
 
-## Philosophy
+The log shows, per invocation:
+- transcript path
+- extracted `actual_model_id` (server truth)
+- mapped `actual_name`
+- parsed `claimed_name`
+- the first ~120 bytes of the turn text (as `od -c` for invisible characters)
+- delegation tag / Agent call counts
 
-> Every decision is independent. Context dictates the model. Recognizing your limits and handing off is intelligent. Don't waste an overpowered model on a simple task.
+## The decision engine (short version)
+
+At each step, ask: **"What does this specific step require?"**
+
+**Cognitive complexity**
+- Low (rephrase, clarify) → Haiku
+- Medium (code, test, execute a clear plan) → Sonnet
+- High (design, arbitrate, debug the impossible) → Opus
+
+**Decision risk**
+- Easily reversible → Sonnet
+- Structural → Opus
+- No risk → Haiku
+
+**Current state**
+- Still clarifying → Haiku
+- Plan clear, executing → Sonnet
+- Stuck / need to step back → Opus
+
+Full decision engine, rules, escalation logic, and prompt templates in [`SKILL.md`](SKILL.md) and [`references/phases.md`](references/phases.md).
+
+## Architecture rationale
+
+The skill alone could not enforce honest annotation — Claude kept drifting, and on multiple occasions wrote `[Session: Sonnet 4.6]` while the orchestrator was in fact Opus 4.7. That's not style drift, it is a lie.
+
+The fix is structural, not exhortative: the harness (which is not Claude) runs the hooks and has access to the server-generated `.message.model` field for every assistant message. That field is set by Anthropic's API, not by the model itself. It cannot be faked. Gate 2 uses it to ground-truth every tag.
+
+This is also why the bypass exists: a rule this strict needs an explicit escape valve, or it becomes impossible to ever discuss the system itself.
 
 ## License
 
@@ -77,4 +166,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues and PRs welcome. If you have refinements to the decision heuristics, escalation rules, or templates, open a PR.
+PRs welcome. Especially useful:
+- New model IDs as new versions ship (add to the `case` in `adaptive-model-verify.sh`)
+- Tests for edge cases in the transcript parsing
+- Refinements to the decision heuristics
