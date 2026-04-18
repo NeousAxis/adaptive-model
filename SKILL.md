@@ -26,9 +26,10 @@ On activation, display:
 ```
 Adaptive Model active.
 The optimal model will be automatically selected at each step.
+Every response and every action starts with [Model: <name>].
 ```
 
-Then immediately analyze the first message.
+Then immediately analyze the first message. **Starting with the very first response after activation, apply the announcement rule (see "Model indicator" section).**
 
 ## The decision engine
 
@@ -96,15 +97,25 @@ Each sub-agent receives in its prompt:
 
 The prompt must be complete and self-contained — the sub-agent has no access to the conversation.
 
-### Model indicator
+### Model indicator (MANDATORY)
 
-On each model change, display a discreet line:
+**Absolute rule:** at the start of EVERY response and EVERY action, announce the loaded model. No exception, even if the model hasn't changed since the previous action.
+
+Announcement line format (first line of every response / action):
 
 ```
-→ Opus 4.6: architecture evaluation
+[Model: <Haiku 4.5 | Sonnet 4.6 | Opus 4.7>] — <purpose of this action>
 ```
 
-Only when the model changes, not on every micro-action.
+Examples:
+
+```
+[Model: Haiku 4.5] — clarifying the need
+[Model: Sonnet 4.6] — implementing the auth module
+[Model: Opus 4.7] — architecture arbitration
+```
+
+If multiple actions chain in the same response (read, write, tool call), each action is preceded by its own announcement line. The user must be able to read the transcript and know at any moment which model is reasoning.
 
 ### Tracking
 
@@ -131,11 +142,12 @@ The user always retains control:
 
 ## Rules
 
-1. **Every decision is independent** — Don't follow a sequence. Evaluate at each step.
-2. **Context dictates** — The situation dictates the model, not a predefined workflow.
-3. **Transparent for the user** — They don't have to think about the model.
-4. **Escalation = intelligence** — Recognizing your limits and handing off is smart.
-5. **No waste** — Don't use an overpowered model for a simple task.
+1. **Mandatory announcement** — Every response and every action starts with `[Model: <name>] — <purpose>`. No exceptions.
+2. **Every decision is independent** — Don't follow a sequence. Evaluate at each step.
+3. **Context dictates** — The situation dictates the model, not a predefined workflow.
+4. **Transparent for the user** — They never have to guess which model is reasoning: it's announced.
+5. **Escalation = intelligence** — Recognizing your limits and handing off is smart.
+6. **No waste** — Don't use an overpowered model for a simple task.
 
 ## Reference prompts
 

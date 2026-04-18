@@ -25,7 +25,7 @@ Examples:
 
 ## Key features
 
-- **Transparent model switching** — a discreet indicator shows when the model changes
+- **Mandatory model announcement** — every response and every action starts with `[Model: <name>] — <purpose>`, so you always know which model is reasoning
 - **Automatic escalation** — when Sonnet gets stuck, Opus is spawned with full context
 - **User override** — say "use Opus" or "go fast" and the skill respects it
 - **No waste** — never uses an overpowered model for a trivial task
