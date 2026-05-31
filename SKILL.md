@@ -25,11 +25,10 @@ On activation, display:
 
 ```
 Adaptive Model active.
-Every direct response will carry [Session: <real orchestrator>].
-Every delegation to a sub-agent will carry [Delegating to: <model>] — <purpose>.
+The optimal model will be automatically selected at each step.
 ```
 
-Then immediately analyze the first message. **Starting with the very first response after activation, apply the honest announcement rule (see "Model indicator" section).**
+Then immediately analyze the first message.
 
 ## The decision engine
 
@@ -52,6 +51,43 @@ At each step, ask yourself: **"What does this specific step require?"**
 - Plan is clear, execution phase → Sonnet
 - Stuck, going in circles → Opus
 - Need to step back and re-evaluate → Opus
+
+### Routing by CAPABILITY, not by model name
+
+You NEVER route to a model by its version number ("send this to Opus 4.8"). You route to the **tier** whose current model has the capabilities the task requires. Because the aliases `haiku` / `sonnet` / `opus` always point to the latest version of each tier, **every new model is adopted automatically with its improved capabilities, without editing this skill.**
+
+Describe the task's need along these dimensions, then pick the tier that best covers them AMONG those available:
+
+| Capability dimension | Low need → | Medium need → | High need → |
+|---|---|---|---|
+| Reasoning depth | Haiku | Sonnet | Opus |
+| Cost sensitivity / high volume | Opus | Sonnet | Haiku (cheapest first) |
+| Speed / latency required | Opus | Sonnet | Haiku (fastest first) |
+| Stakes / irreversibility | Haiku | Sonnet | Opus |
+| Autonomy on a long task | Haiku | Sonnet | Opus |
+
+**Golden rule: always express the need in RELATIVE capabilities ("the deepest-reasoning tier available"), never in an absolute version.** This way the skill never goes stale when a new model ships — it picks up the new capability automatically.
+
+#### Technical ceiling to know (don't work around it blindly)
+
+- The `Agent(model: …)` tool only accepts 3 aliases: `haiku`, `sonnet`, `opus`. You CANNOT pass a full identifier (`claude-opus-4-8-…`) to a sub-agent. Stay on the aliases.
+- No machine-readable feed lists a model's "properties" (benchmarks, price, speed). Any absolute-value table goes stale — hence the RELATIVE dimensions above.
+- Consequence: a new **version** of an existing tier is picked up on its own (alias). A model of a **radically new type** cannot be routed automatically — the user must name it and say which tier to map it to.
+
+#### Roster discovery at startup (optional — only if an API key is present)
+
+On activation, you MAY confirm the actually-available models and spot an unknown one. Without an API key, skip this step silently (the aliases are enough):
+
+```bash
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+  curl -s https://api.anthropic.com/v1/models \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    | grep -o '"id":"[^"]*"'
+fi
+```
+
+If a returned model matches no known tier (Haiku/Sonnet/Opus), **flag it to the user** and ask which tier to map it to — then route via the matching alias. Otherwise, change nothing.
 
 ### Example decisions (NOT fixed rules)
 
@@ -97,48 +133,15 @@ Each sub-agent receives in its prompt:
 
 The prompt must be complete and self-contained — the sub-agent has no access to the conversation.
 
-### Model indicator (MANDATORY and HONEST)
+### Model indicator
 
-**Technical truth:** the orchestrator model (the one writing your response) is **fixed for the entire session**. It CANNOT become a different model when writing directly — it can only *delegate* a sub-task to another model via the `Agent(model=…)` tool.
+On each model change, display a discreet line so the user can see which model is reasoning:
 
-There are therefore two distinct annotations. **Never conflate them. Never lie.**
-
-#### 1. `[Session: <orchestrator>]` — on EVERY direct response
-
-First line of every response you write yourself (text, analysis, synthesis, non-Agent tool calls like Read/Edit/Bash). State the real session model, the one fixed by the user in the harness. Never lie about this value — if the session is Opus 4.7, write `[Session: Opus 4.7]`, even if you would *like* to appear lighter.
-
-Format:
 ```
-[Session: <Haiku 4.5 | Sonnet 4.6 | Opus 4.7>]
+→ Opus: architecture evaluation
 ```
 
-Example at the top of a response:
-```
-[Session: Opus 4.7]
-Here is my answer...
-```
-
-#### 2. `[Delegating to: <model>] — <purpose>` — only when you actually spawn a sub-agent
-
-Print this line **immediately before** each `Agent(model=…)` call. The `<model>` must exactly match what you pass to `model:`. If you are not spawning an `Agent`, do not write this line — a tag without real delegation is a lie.
-
-Format:
-```
-[Delegating to: <Haiku 4.5 | Sonnet 4.6 | Opus 4.7>] — <sub-task purpose>
-```
-
-Example:
-```
-[Delegating to: Sonnet 4.6] — implementing the auth module
-<Agent(model="sonnet", ...) call>
-```
-
-#### What is NOT allowed
-
-- Writing `[Model: Sonnet 4.6]` on a response that the Opus orchestrator writes itself → lie.
-- Omitting `[Session: …]` on a direct response → opaque, forbidden.
-- Writing `[Delegating to: X]` without calling `Agent(model=X, …)` right after → theater, forbidden.
-- Changing the value of `[Session: …]` mid-session → technically impossible, therefore a lie.
+Show it only when the model changes, not on every micro-action. Use the tier name (Haiku / Sonnet / Opus), never a hardcoded version number.
 
 ### Tracking
 
@@ -165,10 +168,10 @@ The user always retains control:
 
 ## Rules
 
-1. **Absolute honesty about the model** — `[Session: <orchestrator>]` on every direct response (the real model, never a lie). `[Delegating to: <model>] — <purpose>` only when an `Agent(model=…)` is actually spawned.
+1. **Route by capability, not by version** — Pick the tier whose current model fits the need. The aliases auto-adopt new model versions; never hardcode a version number.
 2. **Every decision is independent** — Don't follow a sequence. Evaluate at each step.
 3. **Context dictates** — The situation dictates the model, not a predefined workflow.
-4. **Transparent for the user** — They never have to guess which model is reasoning: it's announced, and true.
+4. **Transparent for the user** — A discreet indicator shows which model is reasoning when it changes.
 5. **Escalation = intelligence** — Recognizing your limits and handing off is smart.
 6. **No waste** — Don't use an overpowered model for a simple task.
 
